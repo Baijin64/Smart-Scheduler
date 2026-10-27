@@ -6,10 +6,15 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build (${{ matrix.arch }})
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: "-C target-feature=+crt-static -C link-arg=/STACK:262144,8192"
     strategy:
       fail-fast: false
       matrix:
@@ -40,5 +45,6 @@ jobs:
           name: smart-scheduler-${{ matrix.arch }}
           path: |
             SmartScheduler_*_${{ matrix.arch }}.msix
+            smart-scheduler-${{ matrix.arch }}.exe
             SmartScheduler_Cert.cer
-            target/${{ matrix.target }}/release/smart-scheduler.exe
+            install-msix.ps1

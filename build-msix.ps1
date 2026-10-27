@@ -28,7 +28,13 @@ if ($CustomExe) {
         if (Test-Path $GnuLlvmExe) { $ExePath = $GnuLlvmExe }
     }
 } else {
-    $ExePath = Join-Path $ProjectRoot "target\release\smart-scheduler.exe"
+    $TargetX64Exe = Join-Path $ProjectRoot "target\x86_64-pc-windows-msvc\release\smart-scheduler.exe"
+    $DefaultExe = Join-Path $ProjectRoot "target\release\smart-scheduler.exe"
+    if ((Test-Path $TargetX64Exe) -and ((-not (Test-Path $DefaultExe)) -or ((Get-Item $TargetX64Exe).LastWriteTime -gt (Get-Item $DefaultExe).LastWriteTime))) {
+        $ExePath = $TargetX64Exe
+    } else {
+        $ExePath = $DefaultExe
+    }
 }
 
 # Build binary if not skipped
@@ -124,10 +130,13 @@ Export-Certificate -Cert $Cert -FilePath $CerPath -Force | Out-Null
 & $SignTool sign /fd SHA256 /sha1 $Cert.Thumbprint $MsixOut | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
 
+$StandaloneExeOut = Join-Path $ProjectRoot "smart-scheduler-$Arch.exe"
+Copy-Item -Force $ExePath $StandaloneExeOut
+
 $ExeSize = (Get-Item $ExePath).Length
 $MsixSize = (Get-Item $MsixOut).Length
 Write-Host ""
-Write-Host "MSIX Build Complete ($Arch)!" -ForegroundColor Green
-Write-Host "  Executable:   $ExePath ($ExeSize bytes)"
+Write-Host "MSIX & Standalone EXE Build Complete ($Arch)!" -ForegroundColor Green
+Write-Host "  Standalone:   $StandaloneExeOut ($ExeSize bytes)"
 Write-Host "  MSIX Package: $MsixOut ($MsixSize bytes)"
 Write-Host "  Certificate:  $CerPath"

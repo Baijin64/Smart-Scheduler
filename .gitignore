@@ -1,6 +1,7 @@
 /target
 /msix/*.exe
 /msix/Assets/*.png
+/smart-scheduler-*.exe
 *.msix
 *.cer
 *.pfx
