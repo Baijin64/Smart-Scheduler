@@ -10,7 +10,7 @@
   <Identity
     Name="DerekLi.SmartScheduler"
     Publisher="CN=8BE064BB-20F6-4B24-8FB4-41C94B229A53"
-    Version="0.2.3.0"
+    Version="0.2.4.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -62,6 +62,7 @@
     <rescap:Capability Name="allowElevation" />
   </Capabilities>
 </Package>
+
 
 
 
