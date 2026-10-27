@@ -10,7 +10,7 @@
   <Identity
     Name="DerekLi.SmartScheduler"
     Publisher="CN=DerekLi"
-    Version="0.2.2.0"
+    Version="0.2.3.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -21,7 +21,7 @@
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="0.2.2.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="0.2.3.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -61,6 +61,8 @@
     <rescap:Capability Name="allowElevation" />
   </Capabilities>
 </Package>
+
+
 
 
 
