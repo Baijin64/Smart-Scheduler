@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 desktop rescap">
+
+  <Identity
+    Name="DerekLi.SmartScheduler"
+    Publisher="CN=DerekLi"
+    Version="0.2.2.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Smart Scheduler</DisplayName>
+    <PublisherDisplayName>Derek Li</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Ultra-lightweight CPU Topology Affinity &amp; FairShare scheduler for Windows</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="zh-cn" />
+  </Resources>
+
+  <Applications>
+    <Application Id="SmartScheduler" Executable="smart-scheduler.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Smart Scheduler"
+        Description="超轻量 CPU 亲和性与 FairShare 公平调度器"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+        <!-- 原生 Windows 设置 -> 应用 -> 启动 (卸载自动清理) -->
+        <desktop:Extension Category="windows.startupTask" Executable="smart-scheduler.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask
+            TaskId="SmartSchedulerStartupTask"
+            Enabled="true"
+            DisplayName="Smart Scheduler" />
+        </desktop:Extension>
+
+        <!-- 命令行别名支持终端或 Win+R 直接运行 smart-scheduler -->
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="smart-scheduler.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias>
+            <uap5:ExecutionAlias Alias="smart-scheduler.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="allowElevation" />
+  </Capabilities>
+</Package>

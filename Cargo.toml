@@ -1,0 +1,19 @@
+[package]
+name = "smart-scheduler"
+version = "0.2.2"
+edition = "2021"
+description = "Ultra-lightweight Windows CPU Topology Affinity & FairShare dynamic scheduler"
+authors = ["Derek Li <169961693+Baijin64@users.noreply.github.com>"]
+license = "MIT"
+repository = "https://github.com/Baijin64/Smart-Scheduler"
+homepage = "https://github.com/Baijin64/Smart-Scheduler"
+readme = "README.md"
+keywords = ["windows", "cpu-affinity", "scheduler", "fairshare", "arm64"]
+categories = ["os::windows-apis", "system-tools"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

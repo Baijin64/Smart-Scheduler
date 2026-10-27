@@ -1,0 +1,7 @@
+/target
+/msix/*.exe
+/msix/Assets/*.png
+*.msix
+*.cer
+*.pfx
+config.toml
