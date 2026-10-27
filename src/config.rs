@@ -59,6 +59,7 @@ pub struct AppConfig {
     pub auto_elevate: bool,
     pub affinity_enabled: bool,
     pub enforce_affinity_every_ticks: u32,
+    pub language: String,
     pub fairshare: FairShareConfig,
     pub rules: Vec<Rule>,
     pub gpu_rules: Vec<GpuRule>,
@@ -114,6 +115,7 @@ impl Default for AppConfig {
             auto_elevate: true,
             affinity_enabled: true,
             enforce_affinity_every_ticks: 5,
+            language: "auto".to_string(),
             fairshare: FairShareConfig {
                 enabled: true,
                 total_cpu_threshold_pct: 7.0,
@@ -244,21 +246,34 @@ impl Rule {
         parts.join(" ")
     }
 
-    /// Short human-readable description for menus and logs.
-    pub fn summary(&self) -> String {
+    /// Short human-readable description for menus and logs with localization support.
+    pub fn summary_localized(&self, is_zh: bool) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(a) = &self.affinity_str {
-            parts.push(format!("核心 {}", a));
+            parts.push(if is_zh {
+                format!("核心 {}", a)
+            } else {
+                format!("Cores {}", a)
+            });
         }
         if let Some(p) = self.priority {
-            parts.push(format!("优先级 {}", priority_to_str(p)));
+            parts.push(if is_zh {
+                format!("优先级 {}", priority_to_str(p))
+            } else {
+                format!("Priority {}", priority_to_str(p))
+            });
         }
         match self.fairshare {
-            FairShareMode::Exempt => parts.push("FS豁免".into()),
-            FairShareMode::Force => parts.push("FS强力".into()),
+            FairShareMode::Exempt => parts.push(if is_zh { "FS豁免".into() } else { "FS Exempt".into() }),
+            FairShareMode::Force => parts.push(if is_zh { "FS强力".into() } else { "FS Force".into() }),
             FairShareMode::Default => {}
         }
         parts.join(" · ")
+    }
+
+    /// Short human-readable description for menus and logs.
+    pub fn summary(&self) -> String {
+        self.summary_localized(true)
     }
 
     /// `path_lower` is only consulted by full-path rules (`None` = unknown -> no match).
@@ -650,7 +665,8 @@ impl AppConfig {
         out.push_str(&format!("interval_ms = {}\n", self.interval_ms));
         out.push_str(&format!("auto_elevate = {}\n", self.auto_elevate));
         out.push_str(&format!("affinity_enabled = {}\n", self.affinity_enabled));
-        out.push_str(&format!("enforce_affinity_every_ticks = {}\n\n", self.enforce_affinity_every_ticks));
+        out.push_str(&format!("enforce_affinity_every_ticks = {}\n", self.enforce_affinity_every_ticks));
+        out.push_str(&format!("language = \"{}\"\n\n", self.language));
 
         out.push_str("[fairshare]\n");
         out.push_str(&format!("enabled = {}\n", self.fairshare.enabled));
@@ -715,6 +731,7 @@ impl AppConfig {
                     "auto_elevate" => if let Ok(b) = v.parse::<bool>() { cfg.auto_elevate = b; },
                     "affinity_enabled" => if let Ok(b) = v.parse::<bool>() { cfg.affinity_enabled = b; },
                     "enforce_affinity_every_ticks" => if let Ok(n) = v.parse::<u32>() { cfg.enforce_affinity_every_ticks = n; },
+                    "language" => cfg.language = v.to_string(),
                     _ => {}
                 },
                 "fairshare" => match k {

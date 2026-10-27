@@ -2,6 +2,7 @@
 
 mod config;
 mod engine;
+mod i18n;
 mod win32;
 
 use std::fs;
@@ -10,6 +11,7 @@ use std::time::SystemTime;
 
 use config::{AppConfig, FairShareMode, Rule};
 use engine::Engine;
+use i18n::Language;
 use win32::*;
 
 const TIMER_ID_TICK: usize = 1;
@@ -26,6 +28,9 @@ const CMD_ELEVATE_NOW: usize = 1006;
 const CMD_TOGGLE_AUTOSTART: usize = 1007;
 const CMD_IMPORT_PL_FILE: usize = 1008;
 const CMD_STARTUP_SETTINGS: usize = 1009;
+const CMD_LANG_AUTO: usize = 1030;
+const CMD_LANG_ZH: usize = 1031;
+const CMD_LANG_EN: usize = 1032;
 const CMD_EXIT: usize = 1099;
 
 // Per-Process Submenu Action Slots (0..STRIDE)
@@ -72,6 +77,12 @@ struct AppState {
     last_tip_tick: u32,
     menu_active_names: Vec<String>,
     menu_rule_patterns: Vec<String>,
+}
+
+impl AppState {
+    pub fn is_chinese(&self) -> bool {
+        Language::parse(&self.config.language).is_chinese()
+    }
 }
 
 static mut APP: *mut AppState = std::ptr::null_mut();
@@ -340,14 +351,26 @@ unsafe fn update_tray_icon(is_add: bool, update_tip: bool) {
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = icon;
 
-    let tip_str = format!(
-        "{}\nCPU: {:.1}% | 规则生效: {} 次 | 公平调度: {} 次 ({})",
-        app.topo_summary,
-        app.engine.last_total_cpu_pct,
-        app.engine.total_affinity_actions,
-        app.engine.total_fairshare_actions,
-        if app.is_admin { "管理员" } else { "普通权限" },
-    );
+    let is_zh = app.is_chinese();
+    let tip_str = if is_zh {
+        format!(
+            "{}\nCPU: {:.1}% | 规则生效: {} 次 | 公平调度: {} 次 ({})",
+            app.topo_summary,
+            app.engine.last_total_cpu_pct,
+            app.engine.total_affinity_actions,
+            app.engine.total_fairshare_actions,
+            if app.is_admin { "管理员" } else { "普通权限" },
+        )
+    } else {
+        format!(
+            "{}\nCPU: {:.1}% | Rules Applied: {} | FairShare: {} ({})",
+            app.topo_summary,
+            app.engine.last_total_cpu_pct,
+            app.engine.total_affinity_actions,
+            app.engine.total_fairshare_actions,
+            if app.is_admin { "Administrator" } else { "Standard" },
+        )
+    };
     let tip_wide = to_wide(&tip_str);
     let copy_len = tip_wide.len().min(127);
     nid.szTip[..copy_len].copy_from_slice(&tip_wide[..copy_len]);
@@ -367,33 +390,41 @@ unsafe fn remove_tray_icon(hwnd: HWND) {
 }
 
 /// Formats a rule summary, replacing raw core ranges with friendly CPU preset labels when matched.
-fn friendly_rule_summary(rule: &Rule, presets: &[CpuPreset]) -> String {
+fn friendly_rule_summary(rule: &Rule, presets: &[CpuPreset], is_zh: bool) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(spec) = &rule.affinity_str {
         if let Some(p) = presets.iter().find(|p| &p.spec == spec) {
-            parts.push(p.label.clone());
+            parts.push(p.display_label(is_zh).to_string());
         } else {
-            parts.push(format!("核心 {}", spec));
+            parts.push(if is_zh {
+                format!("核心 {}", spec)
+            } else {
+                format!("Cores {}", spec)
+            });
         }
     }
     if let Some(prio) = rule.priority {
         let p_name = match prio {
-            HIGH_PRIORITY_CLASS => "高优先级",
-            ABOVE_NORMAL_PRIORITY_CLASS => "高于正常",
-            NORMAL_PRIORITY_CLASS => "正常优先级",
-            BELOW_NORMAL_PRIORITY_CLASS => "低于正常",
-            IDLE_PRIORITY_CLASS => "空闲优先级",
-            _ => "自定义优先级",
+            HIGH_PRIORITY_CLASS => if is_zh { "高优先级" } else { "High Priority" },
+            ABOVE_NORMAL_PRIORITY_CLASS => if is_zh { "高于正常" } else { "Above Normal" },
+            NORMAL_PRIORITY_CLASS => if is_zh { "正常优先级" } else { "Normal Priority" },
+            BELOW_NORMAL_PRIORITY_CLASS => if is_zh { "低于正常" } else { "Below Normal" },
+            IDLE_PRIORITY_CLASS => if is_zh { "空闲优先级" } else { "Idle Priority" },
+            _ => if is_zh { "自定义优先级" } else { "Custom Priority" },
         };
         parts.push(p_name.into());
     }
     match rule.fairshare {
-        FairShareMode::Exempt => parts.push("FS豁免".into()),
-        FairShareMode::Force => parts.push("FS强力".into()),
+        FairShareMode::Exempt => parts.push(if is_zh { "FS豁免".into() } else { "FS Exempt".into() }),
+        FairShareMode::Force => parts.push(if is_zh { "FS强力".into() } else { "FS Force".into() }),
         FairShareMode::Default => {}
     }
     if rule.delay_ms > 0 {
-        parts.push(format!("延迟{}ms", rule.delay_ms));
+        parts.push(if is_zh {
+            format!("延迟{}ms", rule.delay_ms)
+        } else {
+            format!("Delay {}ms", rule.delay_ms)
+        });
     }
     parts.join(" · ")
 }
@@ -421,6 +452,7 @@ unsafe fn populate_proc_submenu(
     presets: &[CpuPreset],
     cur_rule: Option<&Rule>,
     base_cmd: usize,
+    is_zh: bool,
 ) {
     let cur_spec = cur_rule.and_then(|r| r.affinity_str.as_deref());
     let cur_prio = cur_rule.and_then(|r| r.priority);
@@ -429,37 +461,56 @@ unsafe fn populate_proc_submenu(
 
     for (p_idx, preset) in presets.iter().enumerate() {
         let checked = cur_spec == Some(preset.spec.as_str());
-        menu_check(sub, base_cmd + p_idx, checked, &format!("绑核: {}", preset.label));
+        let label = if is_zh {
+            format!("绑核: {}", preset.display_label(true))
+        } else {
+            format!("Affinity: {}", preset.display_label(false))
+        };
+        menu_check(sub, base_cmd + p_idx, checked, &label);
     }
-    menu_check(sub, base_cmd + SLOT_AFFINITY_ALL, cur_spec.is_none(), "绑核: 不限制 (全核)");
+    menu_check(
+        sub,
+        base_cmd + SLOT_AFFINITY_ALL,
+        cur_spec.is_none(),
+        if is_zh { "绑核: 不限制 (全核)" } else { "Affinity: Default (All Cores)" },
+    );
 
     menu_sep(sub);
-    let prio_items: &[(usize, Option<DWORD>, &str)] = &[
-        (SLOT_PRIO_NONE, None, "优先级: 默认 (不干预)"),
-        (SLOT_PRIO_HIGH, Some(HIGH_PRIORITY_CLASS), "优先级: 高 (High)"),
-        (SLOT_PRIO_ABOVE, Some(ABOVE_NORMAL_PRIORITY_CLASS), "优先级: 高于正常 (Above Normal)"),
-        (SLOT_PRIO_NORMAL, Some(NORMAL_PRIORITY_CLASS), "优先级: 正常 (Normal)"),
-        (SLOT_PRIO_BELOW, Some(BELOW_NORMAL_PRIORITY_CLASS), "优先级: 低于正常 (Below Normal)"),
-        (SLOT_PRIO_IDLE, Some(IDLE_PRIORITY_CLASS), "优先级: 空闲 (Idle)"),
+    let prio_items: &[(usize, Option<DWORD>, &str, &str)] = &[
+        (SLOT_PRIO_NONE, None, "优先级: 默认 (不干预)", "Priority: Default (Unchanged)"),
+        (SLOT_PRIO_HIGH, Some(HIGH_PRIORITY_CLASS), "优先级: 高 (High)", "Priority: High"),
+        (SLOT_PRIO_ABOVE, Some(ABOVE_NORMAL_PRIORITY_CLASS), "优先级: 高于正常 (Above Normal)", "Priority: Above Normal"),
+        (SLOT_PRIO_NORMAL, Some(NORMAL_PRIORITY_CLASS), "优先级: 正常 (Normal)", "Priority: Normal"),
+        (SLOT_PRIO_BELOW, Some(BELOW_NORMAL_PRIORITY_CLASS), "优先级: 低于正常 (Below Normal)", "Priority: Below Normal"),
+        (SLOT_PRIO_IDLE, Some(IDLE_PRIORITY_CLASS), "优先级: 空闲 (Idle)", "Priority: Idle"),
     ];
-    for &(slot, prio_val, label) in prio_items {
-        menu_check(sub, base_cmd + slot, cur_prio == prio_val, label);
+    for &(slot, prio_val, label_zh, label_en) in prio_items {
+        menu_check(sub, base_cmd + slot, cur_prio == prio_val, if is_zh { label_zh } else { label_en });
     }
 
     menu_sep(sub);
-    let fs_items: &[(usize, FairShareMode, &str)] = &[
-        (SLOT_FS_DEFAULT, FairShareMode::Default, "FairShare: 默认跟随全局"),
-        (SLOT_FS_EXEMPT, FairShareMode::Exempt, "FairShare: 豁免 (绝不降级)"),
-        (SLOT_FS_FORCE, FairShareMode::Force, "FairShare: 强力调度 (超阈值即降级)"),
+    let fs_items: &[(usize, FairShareMode, &str, &str)] = &[
+        (SLOT_FS_DEFAULT, FairShareMode::Default, "FairShare: 默认跟随全局", "FairShare: Default (Follow Global)"),
+        (SLOT_FS_EXEMPT, FairShareMode::Exempt, "FairShare: 豁免 (绝不降级)", "FairShare: Exempt (Never Restrain)"),
+        (SLOT_FS_FORCE, FairShareMode::Force, "FairShare: 强力调度 (超阈值即降级)", "FairShare: Force (Always Restrain)"),
     ];
-    for &(slot, mode, label) in fs_items {
-        menu_check(sub, base_cmd + slot, cur_fs == mode, label);
+    for &(slot, mode, label_zh, label_en) in fs_items {
+        menu_check(sub, base_cmd + slot, cur_fs == mode, if is_zh { label_zh } else { label_en });
     }
-    menu_check(sub, base_cmd + SLOT_TOGGLE_PERSIST, cur_persist, "定期复查防重置 (Persist)");
+    menu_check(
+        sub,
+        base_cmd + SLOT_TOGGLE_PERSIST,
+        cur_persist,
+        if is_zh { "定期复查防重置 (Persist)" } else { "Persistent Enforce (Re-apply affinity)" },
+    );
 
     if cur_rule.is_some() {
         menu_sep(sub);
-        menu_item(sub, base_cmd + SLOT_REMOVE_RULE, "移除此规则并恢复默认");
+        menu_item(
+            sub,
+            base_cmd + SLOT_REMOVE_RULE,
+            if is_zh { "移除此规则并恢复默认" } else { "Remove Rule (Restore Defaults)" },
+        );
     }
 }
 
@@ -468,18 +519,29 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         return;
     }
     let app = &mut *APP;
+    let is_zh = app.is_chinese();
     let menu = CreatePopupMenu();
     if menu == NULL {
         return;
     }
 
-    let header = to_wide(&format!(
-        "{}  CPU: {:.1}% | 生效: {} | 调度: {}",
-        app.topo_summary,
-        app.engine.last_total_cpu_pct,
-        app.engine.total_affinity_actions,
-        app.engine.total_fairshare_actions
-    ));
+    let header = to_wide(&if is_zh {
+        format!(
+            "{}  CPU: {:.1}% | 生效: {} | 调度: {}",
+            app.topo_summary,
+            app.engine.last_total_cpu_pct,
+            app.engine.total_affinity_actions,
+            app.engine.total_fairshare_actions
+        )
+    } else {
+        format!(
+            "{}  CPU: {:.1}% | Applied: {} | FairShare: {}",
+            app.topo_summary,
+            app.engine.last_total_cpu_pct,
+            app.engine.total_affinity_actions,
+            app.engine.total_fairshare_actions
+        )
+    });
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, header.as_ptr());
     menu_sep(menu);
 
@@ -487,10 +549,22 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         let fg_sub = CreatePopupMenu();
         let fg_name = &app.engine.last_user_fg_name;
         let cur_rule = app.config.find_rule_by_name(fg_name);
-        populate_proc_submenu(fg_sub, &app.presets, cur_rule, CMD_FG_BASE);
+        populate_proc_submenu(fg_sub, &app.presets, cur_rule, CMD_FG_BASE, is_zh);
         let label = match cur_rule {
-            Some(r) => format!("配置当前窗口: {} [{}]", fg_name, r.summary()),
-            None => format!("配置当前窗口: {}", fg_name),
+            Some(r) => {
+                if is_zh {
+                    format!("配置当前窗口: {} [{}]", fg_name, r.summary_localized(true))
+                } else {
+                    format!("Foreground Window: {} [{}]", fg_name, r.summary_localized(false))
+                }
+            }
+            None => {
+                if is_zh {
+                    format!("配置当前窗口: {}", fg_name)
+                } else {
+                    format!("Foreground Window: {}", fg_name)
+                }
+            }
         };
         menu_popup(menu, fg_sub, &label);
     }
@@ -500,25 +574,62 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     app.menu_active_names.clear();
     for (idx, (proc_name, cnt, cpu_pct, rule_opt)) in top_active.into_iter().enumerate() {
         let sub = CreatePopupMenu();
-        populate_proc_submenu(sub, &app.presets, rule_opt.as_ref(), CMD_ACTIVE_BASE + idx * STRIDE);
+        populate_proc_submenu(sub, &app.presets, rule_opt.as_ref(), CMD_ACTIVE_BASE + idx * STRIDE, is_zh);
         let item_title = match &rule_opt {
-            Some(r) => format!("✓ {} ({:.1}%, {}个) [{}]", proc_name, cpu_pct, cnt, r.summary()),
-            None => format!("   {} ({:.1}%, {}个)", proc_name, cpu_pct, cnt),
+            Some(r) => {
+                if is_zh {
+                    format!("✓ {} ({:.1}%, {}个) [{}]", proc_name, cpu_pct, cnt, r.summary_localized(true))
+                } else {
+                    format!("✓ {} ({:.1}%, {}x) [{}]", proc_name, cpu_pct, cnt, r.summary_localized(false))
+                }
+            }
+            None => {
+                if is_zh {
+                    format!("   {} ({:.1}%, {}个)", proc_name, cpu_pct, cnt)
+                } else {
+                    format!("   {} ({:.1}%, {}x)", proc_name, cpu_pct, cnt)
+                }
+            }
         };
         menu_popup(active_menu, sub, &item_title);
         app.menu_active_names.push(proc_name);
     }
-    menu_popup(menu, active_menu, "选择活跃进程配置 (按 CPU 排序 Top 12)");
+    menu_popup(
+        menu,
+        active_menu,
+        if is_zh { "选择活跃进程配置 (按 CPU 排序 Top 12)" } else { "Active Processes (Top 12 by CPU)" },
+    );
 
     let pick_menu = CreatePopupMenu();
     for (p_idx, preset) in app.presets.iter().enumerate() {
-        menu_item(pick_menu, CMD_PICK_BASE + p_idx, &format!("选择 .exe 绑核到 -> {}", preset.label));
+        let text = if is_zh {
+            format!("选择 .exe 绑核到 -> {}", preset.display_label(true))
+        } else {
+            format!("Assign .exe Affinity -> {}", preset.display_label(false))
+        };
+        menu_item(pick_menu, CMD_PICK_BASE + p_idx, &text);
     }
     menu_sep(pick_menu);
-    menu_item(pick_menu, CMD_PICK_BASE + PICK_EXTRA_HIGH_EXEMPT, "选择 .exe 设为 -> 高优先级 + FairShare 豁免");
-    menu_item(pick_menu, CMD_PICK_BASE + PICK_EXTRA_EXEMPT_ONLY, "选择 .exe 设为 -> FairShare 豁免 (不限核)");
-    menu_item(pick_menu, CMD_PICK_BASE + PICK_EXTRA_FORCE_LOW, "选择 .exe 设为 -> 低于正常优先级 + 强力调度");
-    menu_popup(menu, pick_menu, "浏览选择 .exe 文件添加规则...");
+    menu_item(
+        pick_menu,
+        CMD_PICK_BASE + PICK_EXTRA_HIGH_EXEMPT,
+        if is_zh { "选择 .exe 设为 -> 高优先级 + FairShare 豁免" } else { "Set .exe -> High Priority + FairShare Exempt" },
+    );
+    menu_item(
+        pick_menu,
+        CMD_PICK_BASE + PICK_EXTRA_EXEMPT_ONLY,
+        if is_zh { "选择 .exe 设为 -> FairShare 豁免 (不限核)" } else { "Set .exe -> FairShare Exempt (All Cores)" },
+    );
+    menu_item(
+        pick_menu,
+        CMD_PICK_BASE + PICK_EXTRA_FORCE_LOW,
+        if is_zh { "选择 .exe 设为 -> 低于正常优先级 + 强力调度" } else { "Set .exe -> Below Normal Priority + Force Restraint" },
+    );
+    menu_popup(
+        menu,
+        pick_menu,
+        if is_zh { "浏览选择 .exe 文件添加规则..." } else { "Browse .exe to Add Rule..." },
+    );
 
     let rules_menu = CreatePopupMenu();
     app.menu_rule_patterns.clear();
@@ -527,57 +638,128 @@ unsafe fn show_tray_menu(hwnd: HWND) {
             rules_menu,
             MF_STRING | MF_GRAYED,
             0,
-            to_wide("暂无进程规则 (支持在 config.toml 中使用 * 通配符或路径)").as_ptr(),
+            to_wide(if is_zh {
+                "暂无进程规则 (支持在 config.toml 中使用 * 通配符或路径)"
+            } else {
+                "No rules configured (wildcards & paths supported in config.toml)"
+            }).as_ptr(),
         );
     } else {
         for (idx, r) in app.config.rules.iter().enumerate() {
             let sub = CreatePopupMenu();
-            populate_proc_submenu(sub, &app.presets, Some(r), CMD_RULE_BASE + idx * STRIDE);
-            let label = format!("{}  ->  {}", r.pattern, friendly_rule_summary(r, &app.presets));
+            populate_proc_submenu(sub, &app.presets, Some(r), CMD_RULE_BASE + idx * STRIDE, is_zh);
+            let label = format!("{}  ->  {}", r.pattern, friendly_rule_summary(r, &app.presets, is_zh));
             menu_popup(rules_menu, sub, &label);
             app.menu_rule_patterns.push(r.pattern.clone());
         }
     }
-    menu_popup(menu, rules_menu, &format!("已配置规则管理 ({} 条)", app.config.rules.len()));
+    menu_popup(
+        menu,
+        rules_menu,
+        &if is_zh {
+            format!("已配置规则管理 ({} 条)", app.config.rules.len())
+        } else {
+            format!("Configured Rules ({} active)", app.config.rules.len())
+        },
+    );
 
     menu_sep(menu);
-    menu_check(menu, CMD_TOGGLE_AFFINITY, app.config.affinity_enabled, "启用进程规则自动执行 (绑核 / 优先级)");
-    menu_check(menu, CMD_TOGGLE_FAIRSHARE, app.config.fairshare.enabled, "启用 FairShare 公平调度 (动态平衡)");
+    menu_check(
+        menu,
+        CMD_TOGGLE_AFFINITY,
+        app.config.affinity_enabled,
+        if is_zh { "启用进程规则自动执行 (绑核 / 优先级)" } else { "Enable Rule Enforcement (Affinity / Priority)" },
+    );
+    menu_check(
+        menu,
+        CMD_TOGGLE_FAIRSHARE,
+        app.config.fairshare.enabled,
+        if is_zh { "启用 FairShare 公平调度 (动态平衡)" } else { "Enable FairShare Dynamic Scheduling" },
+    );
 
     let settings_menu = CreatePopupMenu();
     let events_menu = CreatePopupMenu();
     for ev in app.engine.recent_events.iter().rev() {
         AppendMenuW(events_menu, MF_STRING | MF_GRAYED, 0, to_wide(ev).as_ptr());
     }
-    menu_popup(settings_menu, events_menu, "最近调度日志 (实时)");
+    menu_popup(
+        settings_menu,
+        events_menu,
+        if is_zh { "最近调度日志 (实时)" } else { "Recent Scheduling Logs (Live)" },
+    );
     menu_sep(settings_menu);
 
+    let lang_menu = CreatePopupMenu();
+    let cur_lang = Language::parse(&app.config.language);
+    menu_check(
+        lang_menu,
+        CMD_LANG_AUTO,
+        cur_lang == Language::Auto,
+        if is_zh { "跟随系统 / Auto (System Default)" } else { "Auto (System Default)" },
+    );
+    menu_check(lang_menu, CMD_LANG_ZH, cur_lang == Language::ZhCn, "简体中文 (Chinese)");
+    menu_check(lang_menu, CMD_LANG_EN, cur_lang == Language::EnUs, "English");
+    menu_popup(
+        settings_menu,
+        lang_menu,
+        if is_zh { "界面语言 / Language" } else { "Language / 语言" },
+    );
+
     if !app.is_admin {
-        menu_item(settings_menu, CMD_ELEVATE_NOW, "立即以管理员权限重启");
+        menu_item(
+            settings_menu,
+            CMD_ELEVATE_NOW,
+            if is_zh { "立即以管理员权限重启" } else { "Restart as Administrator Now" },
+        );
     }
-    menu_check(settings_menu, CMD_TOGGLE_AUTO_ELEVATE, app.config.auto_elevate, "启动时自动请求管理员权限 (UAC)");
+    menu_check(
+        settings_menu,
+        CMD_TOGGLE_AUTO_ELEVATE,
+        app.config.auto_elevate,
+        if is_zh { "启动时自动请求管理员权限 (UAC)" } else { "Auto-Elevate on Startup (UAC)" },
+    );
     menu_check(
         settings_menu,
         CMD_TOGGLE_AUTOSTART,
         autostart_enabled(),
-        if app.is_msix {
-            "开机自动启动 (注册表 Run 附加项)"
+        if is_zh {
+            if app.is_msix { "开机自动启动 (注册表 Run 附加项)" } else { "开机自动启动 (当前用户 Run)" }
         } else {
-            "开机自动启动 (当前用户 Run)"
+            if app.is_msix { "Start with Windows (Registry Run)" } else { "Start with Windows (Startup Run)" }
         },
     );
     if app.is_msix {
-        menu_item(settings_menu, CMD_STARTUP_SETTINGS, "Windows 启动应用设置 (MSIX StartupTask)...");
+        menu_item(
+            settings_menu,
+            CMD_STARTUP_SETTINGS,
+            if is_zh { "Windows 启动应用设置 (MSIX StartupTask)..." } else { "Windows Startup Apps Settings (MSIX)..." },
+        );
     }
 
     menu_sep(settings_menu);
-    menu_item(settings_menu, CMD_OPEN_CONFIG, "编辑配置文件 (config.toml，保存自动生效)");
-    menu_item(settings_menu, CMD_RELOAD_CONFIG, "立即重新加载配置");
-    menu_item(settings_menu, CMD_IMPORT_PL_FILE, "导入规则配置 (.json / .ini)...");
-    menu_popup(menu, settings_menu, "设置与日志");
+    menu_item(
+        settings_menu,
+        CMD_OPEN_CONFIG,
+        if is_zh { "编辑配置文件 (config.toml，保存自动生效)" } else { "Edit Configuration (config.toml)" },
+    );
+    menu_item(
+        settings_menu,
+        CMD_RELOAD_CONFIG,
+        if is_zh { "立即重新加载配置" } else { "Reload Configuration Now" },
+    );
+    menu_item(
+        settings_menu,
+        CMD_IMPORT_PL_FILE,
+        if is_zh { "导入规则配置 (.json / .ini)..." } else { "Import Rules (.json / .ini)..." },
+    );
+    menu_popup(
+        menu,
+        settings_menu,
+        if is_zh { "设置与日志" } else { "Settings & Logs" },
+    );
 
     menu_sep(menu);
-    menu_item(menu, CMD_EXIT, "退出");
+    menu_item(menu, CMD_EXIT, if is_zh { "退出" } else { "Exit" });
 
     let mut pt = POINT { x: 0, y: 0 };
     GetCursorPos(&mut pt);
@@ -876,6 +1058,21 @@ unsafe extern "system" fn wnd_proc(
                 CMD_TOGGLE_AUTO_ELEVATE => {
                     app.config.auto_elevate = !app.config.auto_elevate;
                     save_config_and_record_mtime(app);
+                }
+                CMD_LANG_AUTO => {
+                    app.config.language = "auto".to_string();
+                    save_config_and_record_mtime(app);
+                    update_tray_icon(false, true);
+                }
+                CMD_LANG_ZH => {
+                    app.config.language = "zh-CN".to_string();
+                    save_config_and_record_mtime(app);
+                    update_tray_icon(false, true);
+                }
+                CMD_LANG_EN => {
+                    app.config.language = "en-US".to_string();
+                    save_config_and_record_mtime(app);
+                    update_tray_icon(false, true);
                 }
                 CMD_TOGGLE_AUTOSTART => {
                     let target = !autostart_enabled();

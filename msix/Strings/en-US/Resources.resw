@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="AppDisplayName" xml:space="preserve">
+    <value>Smart Scheduler</value>
+  </data>
+  <data name="AppDescription" xml:space="preserve">
+    <value>Ultra-lightweight Windows CPU Topology Affinity &amp; FairShare dynamic scheduler</value>
+  </data>
+</root>

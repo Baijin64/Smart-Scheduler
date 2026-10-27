@@ -1,8 +1,11 @@
 /target
 /msix/*.exe
 /msix/Assets/*.png
+/msix/*.pri
 /smart-scheduler-*.exe
 *.msix
+*.msixbundle
 *.cer
 *.pfx
 config.toml
+StoreListing_Icon_300x300.png

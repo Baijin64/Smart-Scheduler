@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="AppDisplayName" xml:space="preserve">
+    <value>Smart Scheduler</value>
+  </data>
+  <data name="AppDescription" xml:space="preserve">
+    <value>超轻量 CPU 拓扑亲和性与 FairShare 动态调度器</value>
+  </data>
+</root>

@@ -376,6 +376,7 @@ extern "system" {
     pub fn GetLastError() -> DWORD;
     pub fn GetTickCount64() -> u64;
     pub fn GetLocalTime(lpSystemTime: *mut SYSTEMTIME);
+    pub fn GetUserDefaultUILanguage() -> u16;
 }
 
 #[link(name = "advapi32")]
@@ -657,7 +658,18 @@ pub fn set_autostart(enable: bool) -> bool {
 #[derive(Clone, Debug)]
 pub struct CpuPreset {
     pub label: String,
+    pub label_en: String,
     pub spec: String,
+}
+
+impl CpuPreset {
+    pub fn display_label(&self, is_zh: bool) -> &str {
+        if is_zh || self.label_en.is_empty() {
+            &self.label
+        } else {
+            &self.label_en
+        }
+    }
 }
 
 /// Converts a bitmask like `0x0000FFFF` into compact range notation like `"0-15"` or `"0,2,4,6"`
@@ -741,7 +753,7 @@ pub fn query_cpu_name_from_registry() -> Option<String> {
 
 pub fn query_cpu_name() -> String {
     #[cfg(target_arch = "x86_64")]
-    {
+    unsafe {
         let ext = core::arch::x86_64::__cpuid(0x8000_0000);
         if ext.eax >= 0x8000_0004 {
             let mut brand = [0u8; 48];
@@ -888,6 +900,7 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
             let p_spec = mask_to_spec_string(p_mask);
             presets.push(CpuPreset {
                 label: format!("P-Cores 性能大核 ({})", p_spec),
+                label_en: format!("P-Cores Performance ({})", p_spec),
                 spec: p_spec,
             });
             // Game preset: P-cores excluding Core 0
@@ -897,6 +910,7 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
                     let spec = mask_to_spec_string(p_no_c0);
                     presets.push(CpuPreset {
                         label: format!("P-Cores 纯净游戏核 (避开首核: {})", spec),
+                        label_en: format!("P-Cores Gaming (Skip Core 0: {})", spec),
                         spec,
                     });
                 }
@@ -904,6 +918,7 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
             let e_spec = mask_to_spec_string(e_mask);
             presets.push(CpuPreset {
                 label: format!("E-Cores 能效小核 ({})", e_spec),
+                label_en: format!("E-Cores Efficiency ({})", e_spec),
                 spec: e_spec,
             });
         } else if l3_groups.len() >= 2 {
@@ -912,14 +927,27 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
 
             for (idx, &(mask, mb)) in l3_groups.iter().enumerate() {
                 let spec = mask_to_spec_string(mask);
-                let tag = if is_asymmetric_x3d && mb == max_mb {
-                    format!("CCD{} 3D大缓存簇 ({}MB: {})", idx, mb, spec)
+                let (tag, tag_en) = if is_asymmetric_x3d && mb == max_mb {
+                    (
+                        format!("CCD{} 3D大缓存簇 ({}MB: {})", idx, mb, spec),
+                        format!("CCD{} 3D V-Cache ({}MB: {})", idx, mb, spec),
+                    )
                 } else if is_asymmetric_x3d {
-                    format!("CCD{} 高频簇 ({}MB: {})", idx, mb, spec)
+                    (
+                        format!("CCD{} 高频簇 ({}MB: {})", idx, mb, spec),
+                        format!("CCD{} Frequency Cluster ({}MB: {})", idx, mb, spec),
+                    )
                 } else {
-                    format!("CCD{} 核心簇 ({}MB L3: {})", idx, mb, spec)
+                    (
+                        format!("CCD{} 核心簇 ({}MB L3: {})", idx, mb, spec),
+                        format!("CCD{} Core Cluster ({}MB L3: {})", idx, mb, spec),
+                    )
                 };
-                presets.push(CpuPreset { label: tag, spec });
+                presets.push(CpuPreset {
+                    label: tag,
+                    label_en: tag_en,
+                    spec,
+                });
 
                 // For the primary/V-Cache CCD, also offer a "skip first 2 cores" game preset
                 if (idx == 0 || (is_asymmetric_x3d && mb == max_mb)) && core_masks.len() >= 4 {
@@ -935,6 +963,7 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
                             let g_spec = mask_to_spec_string(game_mask);
                             presets.push(CpuPreset {
                                 label: format!("CCD{} 纯净游戏核 (避开前2核: {})", idx, g_spec),
+                                label_en: format!("CCD{} Gaming (Skip First 2 Cores: {})", idx, g_spec),
                                 spec: g_spec,
                             });
                         }
@@ -949,6 +978,7 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
                 let spec = mask_to_spec_string(no_c0);
                 presets.push(CpuPreset {
                     label: format!("游戏核心 (避开首核中断: {})", spec),
+                    label_en: format!("Gaming Cores (Skip Core 0 IRQ: {})", spec),
                     spec,
                 });
                 let half = core_masks.len() / 2;
@@ -958,10 +988,12 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
                 let s2 = mask_to_spec_string(second_half);
                 presets.push(CpuPreset {
                     label: format!("前半核心簇 ({})", s1),
+                    label_en: format!("First Half Cores ({})", s1),
                     spec: s1,
                 });
                 presets.push(CpuPreset {
                     label: format!("后半核心簇 ({})", s2),
+                    label_en: format!("Second Half Cores ({})", s2),
                     spec: s2,
                 });
             }
@@ -973,6 +1005,7 @@ pub fn detect_cpu_presets() -> (String, Vec<CpuPreset>) {
             let smt_spec = mask_to_spec_string(smt0_mask);
             presets.push(CpuPreset {
                 label: format!("仅物理主核 (关闭超线程 SMT0: {})", smt_spec),
+                label_en: format!("Physical Cores Only (SMT0: {})", smt_spec),
                 spec: smt_spec,
             });
         }

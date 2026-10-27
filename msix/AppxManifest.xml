@@ -14,25 +14,26 @@
     ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>Smart Scheduler</DisplayName>
+    <DisplayName>ms-resource:AppDisplayName</DisplayName>
     <PublisherDisplayName>Derek Li</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <Description>Ultra-lightweight CPU Topology Affinity &amp; FairShare scheduler for Windows</Description>
+    <Description>ms-resource:AppDescription</Description>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="0.2.3.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
+    <Resource Language="en-us" />
     <Resource Language="zh-cn" />
   </Resources>
 
   <Applications>
     <Application Id="SmartScheduler" Executable="smart-scheduler.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="Smart Scheduler"
-        Description="超轻量 CPU 亲和性与 FairShare 公平调度器"
+        DisplayName="ms-resource:AppDisplayName"
+        Description="ms-resource:AppDescription"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />
@@ -61,9 +62,5 @@
     <rescap:Capability Name="allowElevation" />
   </Capabilities>
 </Package>
-
-
-
-
 
 

@@ -1,5 +1,6 @@
 param(
-    [ValidateSet("x64", "arm64")][string]$Arch = $(if ($env:PROCESSOR_ARCHITECTURE -match "ARM64") { "arm64" } else { "x64" })
+    [ValidateSet("x64", "arm64")][string]$Arch = $(if ($env:PROCESSOR_ARCHITECTURE -match "ARM64") { "arm64" } else { "x64" }),
+    [string]$PackageName = "DerekLi.SmartScheduler"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +11,7 @@ $CargoToml = Get-Content (Join-Path $ProjectRoot "Cargo.toml") -Raw
 if ($CargoToml -match 'version\s*=\s*"([^"]+)"') {
     $PkgVersion = $matches[1] + ".0"
 } else {
-    $PkgVersion = "0.2.2.0"
+    $PkgVersion = "0.2.3.0"
 }
 
 $MsixPath = Join-Path $ProjectRoot "SmartScheduler_${PkgVersion}_${Arch}.msix"
@@ -37,7 +38,7 @@ Write-Host "Installing $(Split-Path $MsixPath -Leaf) ($Arch) ..." -ForegroundCol
 Stop-Process -Name "smart-scheduler" -Force -ErrorAction SilentlyContinue
 
 # Back up existing MSIX LocalState\config.toml before removing same-version package (avoids 0x80073CFB)
-$ExistingPkg = Get-AppxPackage -Name "DerekLi.SmartScheduler" | Select-Object -First 1
+$ExistingPkg = Get-AppxPackage -Name $PackageName | Select-Object -First 1
 $SavedConfigContent = $null
 if ($ExistingPkg) {
     $ExistingCfgPath = Join-Path $env:LOCALAPPDATA "Packages\$($ExistingPkg.PackageFamilyName)\LocalState\config.toml"
@@ -50,7 +51,7 @@ if ($ExistingPkg) {
 Add-AppxPackage -Path $MsixPath -ForceApplicationShutdown
 
 # Restore or pre-populate the MSIX LocalState config
-$Pkg = Get-AppxPackage -Name "DerekLi.SmartScheduler" | Select-Object -First 1
+$Pkg = Get-AppxPackage -Name $PackageName | Select-Object -First 1
 if ($Pkg) {
     $LocalStateDir = Join-Path $env:LOCALAPPDATA "Packages\$($Pkg.PackageFamilyName)\LocalState"
     New-Item -ItemType Directory -Force -Path $LocalStateDir | Out-Null
