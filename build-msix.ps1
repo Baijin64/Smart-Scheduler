@@ -65,7 +65,7 @@ if ($CreateBundle) {
     Remove-Item -Recurse -Force $BundleInDir
 
     # If dev certificate is present, sign the bundle
-    $Subject = if ($StorePublisher) { $StorePublisher } else { "CN=DerekLi" }
+    $Subject = if ($StorePublisher) { $StorePublisher } else { "CN=8BE064BB-20F6-4B24-8FB4-41C94B229A53" }
     $Cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $Subject -and $_.NotAfter -gt (Get-Date) } | Select-Object -First 1
     if ($Cert -and -not $StoreBuild) {
         & $SignTool sign /fd SHA256 /sha1 $Cert.Thumbprint $BundleOutPath | Out-Host
@@ -247,7 +247,7 @@ $MsixOut = Join-Path $ProjectRoot "SmartScheduler_${PkgVersion}_${Arch}.msix"
 if ($LASTEXITCODE -ne 0) { throw "makeappx pack failed" }
 
 Write-Host "[5/5] Managing digital signature ..." -ForegroundColor Cyan
-$Subject = if ($StorePublisher) { $StorePublisher } else { "CN=DerekLi" }
+$Subject = if ($StorePublisher) { $StorePublisher } else { "CN=8BE064BB-20F6-4B24-8FB4-41C94B229A53" }
 
 if (-not $StoreBuild) {
     # Local dev self-signed certificate for direct sideloading
