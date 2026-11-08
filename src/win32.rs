@@ -315,6 +315,13 @@ pub struct SYSTEMTIME {
     pub wMilliseconds: WORD,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILETIME {
+    pub dwLowDateTime: u32,
+    pub dwHighDateTime: u32,
+}
+
 #[link(name = "ntdll")]
 extern "system" {
     pub fn NtQuerySystemInformation(
@@ -375,6 +382,11 @@ extern "system" {
     ) -> HANDLE;
     pub fn GetLastError() -> DWORD;
     pub fn GetTickCount64() -> u64;
+    pub fn GetSystemTimes(
+        lpIdleTime: *mut FILETIME,
+        lpKernelTime: *mut FILETIME,
+        lpUserTime: *mut FILETIME,
+    ) -> BOOL;
     pub fn GetLocalTime(lpSystemTime: *mut SYSTEMTIME);
     pub fn GetUserDefaultUILanguage() -> u16;
 }
@@ -468,6 +480,13 @@ extern "system" {
     pub fn PostQuitMessage(nExitCode: i32);
     pub fn PostMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> BOOL;
     pub fn SetTimer(hWnd: HWND, nIDEvent: usize, uElapse: UINT, lpTimerFunc: *mut c_void) -> usize;
+    pub fn SetCoalescableTimer(
+        hWnd: HWND,
+        nIDEvent: usize,
+        uElapse: UINT,
+        lpTimerFunc: *mut c_void,
+        uToleranceDelay: ULONG,
+    ) -> usize;
     pub fn KillTimer(hWnd: HWND, uIDEvent: usize) -> BOOL;
     pub fn CreatePopupMenu() -> HMENU;
     pub fn AppendMenuW(hMenu: HMENU, uFlags: UINT, uIDNewItem: usize, lpNewItem: *const u16) -> BOOL;

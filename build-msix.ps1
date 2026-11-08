@@ -139,7 +139,7 @@ if ($StorePublisherDisplayName) {
     $ManifestContent = [System.Text.RegularExpressions.Regex]::Replace($ManifestContent, '(?<=<PublisherDisplayName>)[^<]+', $StorePublisherDisplayName)
 }
 
-# Preserve standard Windows 10 build 19041 (2004) min version required for allowElevation
+# Preserve standard Windows 10 build 19041 (2004) min version
 $ManifestContent = [System.Text.RegularExpressions.Regex]::Replace($ManifestContent, '(?<=<TargetDeviceFamily\b[^>]*?\bMinVersion=")[^"]+', "10.0.19041.0")
 
 Set-Content -Path $ManifestPath -Value $ManifestContent -Encoding utf8

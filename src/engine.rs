@@ -8,6 +8,9 @@ const MAX_RECENT_EVENTS: usize = 18;
 const NO_RULE: u16 = u16::MAX;
 const FLAG_CRITICAL_IMMUNE: u8 = 1 << 0;
 const FLAG_RESTRAINED: u8 = 1 << 1;
+/// OpenProcess(PROCESS_SET_INFORMATION) was denied (protected/elevated process while running
+/// unelevated). Access rights don't change for a live PID, so never retry it.
+const FLAG_ACCESS_DENIED: u8 = 1 << 2;
 
 /// A space-efficient process name storing names up to 22 ASCII bytes inline (24 bytes total).
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -163,6 +166,11 @@ impl ProcState {
     }
 
     #[inline]
+    pub fn is_access_denied(&self) -> bool {
+        (self.flags & FLAG_ACCESS_DENIED) != 0
+    }
+
+    #[inline]
     pub fn is_restrained(&self) -> bool {
         (self.flags & FLAG_RESTRAINED) != 0
     }
@@ -197,6 +205,10 @@ pub struct Engine {
     pub last_fg_pid: u32,
     pub last_user_fg_pid: u32,
     pub last_user_fg_name: String,
+    /// Previous (idle, kernel, user) system times in 100 ns units, for the cheap load probe.
+    last_sys_times: Option<(u64, u64, u64)>,
+    last_verify_ms: u64,
+    force_full: bool,
 }
 
 impl Engine {
@@ -234,6 +246,9 @@ impl Engine {
             last_fg_pid: 0,
             last_user_fg_pid: 0,
             last_user_fg_name: String::new(),
+            last_sys_times: None,
+            last_verify_ms: now,
+            force_full: true,
         }
     }
 
@@ -250,6 +265,7 @@ impl Engine {
     }
 
     pub fn invalidate_rule_cache(&mut self, cfg: &AppConfig) {
+        self.force_full = true;
         let has_path_rule = cfg.rules.iter().any(|r| r.match_path);
         if !has_path_rule && self.proc_paths.capacity() > 0 {
             self.proc_paths = HashMap::new();
@@ -385,9 +401,75 @@ impl Engine {
         self.active_restrained_count = 0;
     }
 
-    /// Single-syscall, zero-heap-allocation tick
+    /// Runs a full process scan right now, bypassing the idle fast-path (menu open, UI actions).
+    pub fn tick_now(&mut self, cfg: &AppConfig) {
+        self.force_full = true;
+        self.tick(cfg);
+    }
+
+    /// Decides whether this timer beat needs the expensive full process snapshot.
+    ///
+    /// `NtQuerySystemInformation(SystemProcessInformation)` walks every process *and thread*
+    /// (~4 ms and 1.5 MB for ~520 processes) and accounts for ~98% of a tick, while
+    /// `GetSystemTimes` is O(cores). When the machine is quiet, nothing is restrained and no
+    /// rule is waiting for a new process, a full scan is only needed every few beats.
+    fn should_run_full_tick(&mut self, cfg: &AppConfig, now_ms: u64) -> bool {
+        let mut idle = FILETIME::default();
+        let mut kern = FILETIME::default();
+        let mut user = FILETIME::default();
+        let ok = unsafe { GetSystemTimes(&mut idle, &mut kern, &mut user) } != 0;
+
+        let mut cheap_pct: Option<f32> = None;
+        if ok {
+            let ft = |f: &FILETIME| ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64;
+            let cur = (ft(&idle), ft(&kern), ft(&user));
+            if let Some(prev) = self.last_sys_times {
+                // Kernel time already includes idle time.
+                let total = cur.1.saturating_sub(prev.1).saturating_add(cur.2.saturating_sub(prev.2));
+                let idle_d = cur.0.saturating_sub(prev.0);
+                if total > 0 {
+                    cheap_pct = Some(
+                        ((total.saturating_sub(idle_d)) as f64 / total as f64 * 100.0)
+                            .clamp(0.0, 100.0) as f32,
+                    );
+                }
+            }
+            self.last_sys_times = Some(cur);
+        }
+
+        let interval = (cfg.interval_ms as u64).max(1);
+        let has_rules = cfg.affinity_enabled && !cfg.rules.is_empty();
+        // Worst-case latency for noticing a new process that matches a rule.
+        let max_gap = if has_rules { interval * 2 } else { interval * 5 };
+        let elapsed = now_ms.saturating_sub(self.last_tick_ms);
+
+        let busy = match cheap_pct {
+            // Half the FairShare trigger as hysteresis: the probe and the engine measure slightly differently.
+            Some(p) => cfg.fairshare.enabled && p >= cfg.fairshare.total_cpu_threshold_pct * 0.5,
+            None => true,
+        };
+
+        let full = self.force_full
+            || self.tick_counter < 3
+            || self.active_restrained_count > 0
+            || busy
+            || elapsed + interval / 2 >= max_gap;
+
+        if !full {
+            if let Some(p) = cheap_pct {
+                self.last_total_cpu_pct = p;
+            }
+        }
+        full
+    }
+
+    /// Single-syscall, zero-heap-allocation tick (skipped entirely on quiet beats)
     pub fn tick(&mut self, cfg: &AppConfig) {
         let now_ms = unsafe { GetTickCount64() };
+        if !self.should_run_full_tick(cfg, now_ms) {
+            return;
+        }
+        self.force_full = false;
         let now_rel_ms = self.rel_ms(now_ms);
         let delta_ms = now_ms.saturating_sub(self.last_tick_ms).max(1);
         let delta_ms_u16 = delta_ms.min(u16::MAX as u64) as u16;
@@ -395,8 +477,14 @@ impl Engine {
         self.tick_counter = self.tick_counter.wrapping_add(1);
         let cur_tick = self.tick_counter;
 
-        let game_verify_this_tick = cfg.enforce_affinity_every_ticks > 0
-            && (cur_tick % cfg.enforce_affinity_every_ticks == 0);
+        // Time-based so persistent-rule re-verification keeps its cadence even when idle beats are skipped.
+        let interval_ms = (cfg.interval_ms as u64).max(1);
+        let verify_period_ms = cfg.enforce_affinity_every_ticks as u64 * interval_ms;
+        let game_verify_this_tick = verify_period_ms > 0
+            && now_ms.saturating_sub(self.last_verify_ms) + interval_ms / 2 >= verify_period_ms;
+        if game_verify_this_tick {
+            self.last_verify_ms = now_ms;
+        }
 
         // 1. Single NtQuerySystemInformation call for all processes (4 KB page-aligned sizing)
         let actual_snap_bytes: usize;
@@ -674,6 +762,7 @@ impl Engine {
                                 } else {
                                     // Cannot open (protected/elevated): don't retry every tick.
                                     state.rule_applied = 2;
+                                    state.flags |= FLAG_ACCESS_DENIED;
                                 }
                             }
                         }
@@ -734,6 +823,7 @@ impl Engine {
                     && proc_cpu_pct >= cfg.fairshare.process_cpu_threshold_pct
                 {
                     let excluded = rule_exempt
+                        || state.is_access_denied()
                         || (!force
                             && (is_fg
                                 || is_fg_child
@@ -754,7 +844,10 @@ impl Engine {
                                     0,
                                     item.pid,
                                 );
-                                if h != NULL && h != INVALID_HANDLE_VALUE {
+                                if h == NULL || h == INVALID_HANDLE_VALUE {
+                                    state.flags |= FLAG_ACCESS_DENIED;
+                                    state.over_quota_ms = 0;
+                                } else {
                                     let orig = GetPriorityClass(h);
                                     if force
                                         || !cfg.fairshare.tame_only_normal

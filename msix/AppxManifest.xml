@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
@@ -10,7 +10,7 @@
   <Identity
     Name="DerekLi.SmartScheduler"
     Publisher="CN=8BE064BB-20F6-4B24-8FB4-41C94B229A53"
-    Version="0.2.4.0"
+    Version="0.2.5.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -58,8 +58,9 @@
   </Applications>
 
   <Capabilities>
+    <!-- Only runFullTrust (required for any Win32 desktop app). allowElevation was denied by Store
+         certification (10.6.3) and removed: the packaged build runs at standard user privilege. -->
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="allowElevation" />
   </Capabilities>
 </Package>
 

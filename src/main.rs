@@ -158,7 +158,13 @@ fn main() {
 
         let (config, config_path, is_msix) = AppConfig::load_or_create();
 
-        if config.auto_elevate && !is_admin && !args.iter().any(|a| a == "--no-elevate") {
+        // Packaged (Store/MSIX) builds do not declare `allowElevation`, so they always run
+        // at standard user privilege and never attempt a UAC relaunch.
+        if !is_msix
+            && config.auto_elevate
+            && !is_admin
+            && !args.iter().any(|a| a == "--no-elevate")
+        {
             if relaunch_as_admin() {
                 return;
             }
@@ -233,7 +239,7 @@ fn main() {
         APP = Box::into_raw(app_box);
 
         update_tray_icon(true, true);
-        SetTimer(hwnd, TIMER_ID_TICK, (*APP).config.interval_ms, NULL);
+        start_tick_timer(hwnd, (*APP).config.interval_ms);
         optimize_heap_and_trim_working_set();
 
         let mut msg: MSG = std::mem::zeroed();
@@ -251,6 +257,15 @@ fn main() {
             DestroyIcon(app.icon_restraining);
             DestroyIcon(app.icon_paused);
         }
+    }
+}
+
+/// Starts the engine heartbeat as a coalescable timer so Windows can batch our wakeups with
+/// other timers (the idle fast-path already tolerates jitter).
+unsafe fn start_tick_timer(hwnd: HWND, interval_ms: u32) {
+    let tolerance = (interval_ms / 10).clamp(20, 200);
+    if SetCoalescableTimer(hwnd, TIMER_ID_TICK, interval_ms, NULL, tolerance) == 0 {
+        SetTimer(hwnd, TIMER_ID_TICK, interval_ms, NULL);
     }
 }
 
@@ -519,6 +534,8 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         return;
     }
     let app = &mut *APP;
+    // Make sure the menu's "top active apps" list reflects a fresh scan, not a skipped idle beat.
+    app.engine.tick_now(&app.config);
     let is_zh = app.is_chinese();
     let menu = CreatePopupMenu();
     if menu == NULL {
@@ -705,19 +722,22 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         if is_zh { "界面语言 / Language" } else { "Language / 语言" },
     );
 
-    if !app.is_admin {
-        menu_item(
+    // Elevation is only available in the unpackaged build (MSIX runs without `allowElevation`).
+    if !app.is_msix {
+        if !app.is_admin {
+            menu_item(
+                settings_menu,
+                CMD_ELEVATE_NOW,
+                if is_zh { "立即以管理员权限重启" } else { "Restart as Administrator Now" },
+            );
+        }
+        menu_check(
             settings_menu,
-            CMD_ELEVATE_NOW,
-            if is_zh { "立即以管理员权限重启" } else { "Restart as Administrator Now" },
+            CMD_TOGGLE_AUTO_ELEVATE,
+            app.config.auto_elevate,
+            if is_zh { "启动时自动请求管理员权限 (UAC)" } else { "Auto-Elevate on Startup (UAC)" },
         );
     }
-    menu_check(
-        settings_menu,
-        CMD_TOGGLE_AUTO_ELEVATE,
-        app.config.auto_elevate,
-        if is_zh { "启动时自动请求管理员权限 (UAC)" } else { "Auto-Elevate on Startup (UAC)" },
-    );
     menu_check(
         settings_menu,
         CMD_TOGGLE_AUTOSTART,
@@ -902,7 +922,7 @@ unsafe fn reload_config_from_disk(app: &mut AppState, reason: &str) {
     app.config_mtime = file_mtime(&app.config_path);
     if interval_changed {
         KillTimer(app.hwnd, TIMER_ID_TICK);
-        SetTimer(app.hwnd, TIMER_ID_TICK, app.config.interval_ms, NULL);
+        start_tick_timer(app.hwnd, app.config.interval_ms);
     }
     app.engine.invalidate_rule_cache(&app.config);
     app.engine.push_event(format!(
@@ -1085,7 +1105,7 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
                 CMD_ELEVATE_NOW => {
-                    if relaunch_as_admin() {
+                    if !app.is_msix && relaunch_as_admin() {
                         PostQuitMessage(0);
                     }
                 }
