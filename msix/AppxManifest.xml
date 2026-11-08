@@ -58,7 +58,7 @@
   </Applications>
 
   <Capabilities>
-    <!-- Only runFullTrust (required for any Win32 desktop app). allowElevation was denied by Store
+    <!-- Only runFullTrust (required for any Win32 desktop app). the elevation capability was denied by Store
          certification (10.6.3) and removed: the packaged build runs at standard user privilege. -->
     <rescap:Capability Name="runFullTrust" />
   </Capabilities>
