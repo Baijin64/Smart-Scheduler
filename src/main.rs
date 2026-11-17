@@ -965,13 +965,13 @@ unsafe extern "system" fn wnd_proc(
         WM_TIMER => {
             if wparam == TIMER_ID_TICK && !APP.is_null() {
                 let app = &mut *APP;
-                // Hot-reload config.toml every 5 ticks when modified in an external editor
-                if app.engine.tick_counter % 5 == 0 {
-                    let cur_mtime = file_mtime(&app.config_path);
-                    if cur_mtime.is_some() && cur_mtime != app.config_mtime {
-                        reload_config_from_disk(app, "配置文件已自动热重载");
-                        return 0;
-                    }
+                // Hot-reload config.toml when modified in an external editor. One metadata call
+                // per beat (~microseconds); not tied to `tick_counter`, which only advances on
+                // full scans and would delay reloads while the engine idles.
+                let cur_mtime = file_mtime(&app.config_path);
+                if cur_mtime.is_some() && cur_mtime != app.config_mtime {
+                    reload_config_from_disk(app, "配置文件已自动热重载");
+                    return 0;
                 }
                 app.engine.tick(&app.config);
                 update_tray_icon(false, false);
