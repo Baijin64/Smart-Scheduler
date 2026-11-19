@@ -20,7 +20,7 @@ $CargoToml = Get-Content (Join-Path $ProjectRoot "Cargo.toml") -Raw
 if ($CargoToml -match 'version\s*=\s*"([^"]+)"') {
     $PkgVersion = $matches[1] + ".0"
 } else {
-    $PkgVersion = "0.2.3.0"
+    $PkgVersion = "0.2.6.0"
 }
 
 # Resolve Windows SDK packaging tools

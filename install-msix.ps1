@@ -6,20 +6,43 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# Extract package version from Cargo.toml
-$CargoToml = Get-Content (Join-Path $ProjectRoot "Cargo.toml") -Raw
-if ($CargoToml -match 'version\s*=\s*"([^"]+)"') {
-    $PkgVersion = $matches[1] + ".0"
-} else {
-    $PkgVersion = "0.2.3.0"
+# Resolve MSIX path (from Cargo.toml when in repo, or by scanning downloaded release files)
+$CargoPath = Join-Path $ProjectRoot "Cargo.toml"
+$MsixPath = $null
+if (Test-Path $CargoPath) {
+    $CargoToml = Get-Content $CargoPath -Raw
+    if ($CargoToml -match 'version\s*=\s*"([^"]+)"') {
+        $PkgVersion = $matches[1] + ".0"
+        $MsixPath = Join-Path $ProjectRoot "SmartScheduler_${PkgVersion}_${Arch}.msix"
+    }
 }
 
-$MsixPath = Join-Path $ProjectRoot "SmartScheduler_${PkgVersion}_${Arch}.msix"
+if (-not $MsixPath) {
+    $FoundMsix = Get-ChildItem -Path $ProjectRoot -Filter "SmartScheduler_*_${Arch}.msix" -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+    if ($FoundMsix) {
+        $MsixPath = $FoundMsix.FullName
+    }
+}
+
 $CerPath = Join-Path $ProjectRoot "SmartScheduler_Cert.cer"
 
-if (-not (Test-Path $MsixPath)) {
-    Write-Host "Package $MsixPath not found. Invoking build-msix.ps1 -Arch $Arch ..." -ForegroundColor Yellow
-    & (Join-Path $ProjectRoot "build-msix.ps1") -Arch $Arch
+if (-not $MsixPath -or -not (Test-Path $MsixPath)) {
+    $BuildScript = Join-Path $ProjectRoot "build-msix.ps1"
+    if ((Test-Path $CargoPath) -and (Test-Path $BuildScript)) {
+        Write-Host "Package not found. Invoking build-msix.ps1 -Arch $Arch ..." -ForegroundColor Yellow
+        & $BuildScript -Arch $Arch
+        if ($PkgVersion) {
+            $MsixPath = Join-Path $ProjectRoot "SmartScheduler_${PkgVersion}_${Arch}.msix"
+        }
+    } else {
+        throw "MSIX package for $Arch (SmartScheduler_*_${Arch}.msix) not found in $ProjectRoot."
+    }
+}
+
+if (-not (Test-Path $CerPath)) {
+    throw "Certificate file $CerPath not found in $ProjectRoot."
 }
 
 # For a self-signed MSIX to install cleanly via double-click (App Installer) or Add-AppxPackage,
